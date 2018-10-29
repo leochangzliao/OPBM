@@ -41,8 +41,6 @@ class ProposalBeamSearch(caffe.Layer):
         # assert bottom[0].data.shape[0] == 1, \
         #     'Only single item batches are supported'
 
-        # top: 'hyper_rois'
-        # top: 'hyper_labels'
         simu_points = bottom[0].data
         flipped = bottom[1].data
         img_index = bottom[2].data
@@ -108,7 +106,8 @@ class ProposalBeamSearch(caffe.Layer):
         scores = scores[keep]
         # print 'proposals_num_after nums:{}'.format(len(proposals))
         # print 'len(gt_boxes):{},{}'.format(len(gt_boxes), gt_boxes)
-        hyper_pro_each = 64 / len(gt_boxes)
+        total_boxes_per_image = 128
+        hyper_pro_each = total_boxes_per_image / len(gt_boxes)
         hyper_proposal_number = hyper_pro_each * len(gt_boxes)
         hyper_proposals = np.zeros((hyper_proposal_number + len(gt_boxes), 4))
         hyper_labels = np.zeros((hyper_proposal_number + len(gt_boxes),))
@@ -119,13 +118,12 @@ class ProposalBeamSearch(caffe.Layer):
             # gt_box = gt_box[0:4] / self._feat_stride  # feature map size
             overlaps = bbox_overlaps(proposals.astype(np.float),
                                      np.array(gt_box[0:4]).reshape((1, 4)).astype(np.float))
-            thresh = 0.5
+            thresh = 0.6
 
             keep = np.where(np.array(overlaps) >= thresh)[0]
-            while len(keep) <= hyper_pro_each and thresh > 0.4:
+            while len(keep) < hyper_pro_each and thresh > 0.4:
                 thresh -= 0.05
                 keep = np.where(np.array(overlaps) >= thresh)[0]
-                # hyper_proposal_number -= 5
             if thresh > 0.4:
                 proposals_ = proposals[keep, :]
                 scores_ = scores[keep, :]
@@ -208,6 +206,7 @@ class ProposalBeamSearch(caffe.Layer):
         #     # plt.show()
 
         batch_inds = np.zeros((hyper_proposals.shape[0], 1), dtype=np.float32)
+        # hyper_proposals = hyper_proposals/im_info[2]
         blob = np.hstack((batch_inds, hyper_proposals.astype(np.float32, copy=False) / self._feat_stride))
         # print 'hyper_proposal', np.shape(hyper_labels), np.shape(blob),hyper_labels
         top[0].reshape(*(blob.shape))

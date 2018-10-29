@@ -794,12 +794,15 @@ layer {
     bottom: 'hyper_pool'
     bottom: 'hyper_labels'
     bottom: 'gt_boxes'
+    bottom: 'flipped'
+    bottom: 'img_index'
+    bottom: 'im_info'
     top: 'pse_gt_boxes'
     #top:'pse_gts'
     python_param {
     	module: 'hyper.pseudo_output_layer'
         layer: 'PseudoOutputLayer'
-        param_str: "'object_number': 16"
+        param_str: "'feat_stride': 4"
     }
 }
 #========= RPN ============

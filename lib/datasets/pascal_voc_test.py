@@ -778,7 +778,7 @@ def calculate_positive_boxes(boxes, rpn_bboxes):
 def calculate_corloc_rpn(d):
     cache_file_simu_points = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_points.pkl')
     cache_file_simu_bbox = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_bbox_heatmap.pkl')
-    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_aver*.pkl')
+    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_classifi*.pkl')
     view_result = False
     if os.path.exists(cache_file_simu_points):
         with open(cache_file_simu_points, 'rb') as cache_file_simu_points_fid, open(cache_file_simu_bbox,
@@ -808,7 +808,8 @@ def calculate_corloc_rpn(d):
                             im = im[:, :, (2, 1, 0)]
                             total_boxes += len(gt_bboxes)*2
                             try:
-                                if (rpn_bboxes1['rpn_simu_gt_boxes'][:, 4].astype(np.int) == 1).all():
+                                # if (rpn_bboxes1['rpn_simu_gt_boxes'][:, 4].astype(np.int) == 1).all():
+                                if rpn_bboxes1['flipped'] == 1:
                                     # flip boxes
                                     gt_boxes_ = gt_bboxes.copy()
                                     # print boxes
@@ -828,7 +829,8 @@ def calculate_corloc_rpn(d):
                                 else:
                                     boxes_over_thresh += calculate_positive_boxes(gt_bboxes, rpn_bboxes1)
                                     vis_results(im, gt_bboxes, rpn_bboxes1, simu_bboxes, view_result)
-                                if (rpn_bboxes2['rpn_simu_gt_boxes'][:, 4].astype(np.int) == 1).all():
+                                # if (rpn_bboxes2['rpn_simu_gt_boxes'][:, 4].astype(np.int) == 1).all():
+                                if rpn_bboxes2['flipped'] == 1:
                                     # flip boxes
                                     gt_boxes_ = gt_bboxes.copy()
                                     oldx1 = gt_boxes_[:, 0].copy()
