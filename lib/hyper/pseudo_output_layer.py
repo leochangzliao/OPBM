@@ -32,7 +32,7 @@ class PseudoOutputLayer(caffe.Layer):
     iter_times = 0
     train_times = 1000  # each 1000 times to calculate train accuracy
     total_objects = 0
-    total_postives = 0
+    total_positive = 0
     pse_gt_list = []
 
     def setup(self, bottom, top):
@@ -55,10 +55,11 @@ class PseudoOutputLayer(caffe.Layer):
         flipped = bottom[5].data
         img_index = bottom[6].data
         im_info = bottom[7].data[0]
+        hyper_features = bottom[8].data
         one_epoc = 10022
         if DEBUG and self.iter_times % 200 == 0:
             print '+++++++++++++++++++++++++++++++++++++++++++++++++++++'
-            print 'hyper_rois: {},{},{}'.format(len(hyper_rois), np.shape(hyper_rois),hyper_rois)
+            print 'hyper_rois: {},{}'.format(len(hyper_rois), np.shape(hyper_rois))
             print 'hyper_cls_score:{},{}'.format(np.shape(hyper_cls_score),
                                                  np.argmax(hyper_cls_score, axis=1))
             print 'hyper_labels:{}'.format(hyper_labels)
@@ -67,61 +68,104 @@ class PseudoOutputLayer(caffe.Layer):
             # print 'roi data labels:{},{}'.format(len(labels),np.shape(labels))
             print '+++++++++++++++++++++++++++++++++++++++++++++++++++++'
         per_image_classes = len(gt_boxes)
-        hyper_pro_each = 128 / per_image_classes + 1
-        hyper_rois_ = hyper_rois[::hyper_pro_each, 1:5] * self.feat_stride
-        hyper_labels_ = hyper_labels[::hyper_pro_each].reshape(
-            (len(hyper_labels) / hyper_pro_each, 1)) + 1  # plus one as true label
+        fg_pro_each = 64 / per_image_classes + 1
+        bg_pro_each = 64 / per_image_classes
+        hyper_rois_ = hyper_rois[::fg_pro_each + bg_pro_each, 1:5] * self.feat_stride
+        hyper_labels_ = hyper_labels[::fg_pro_each + bg_pro_each].reshape((len(gt_boxes), 1))
         self.iter_times += 1
         self.total_objects += len(hyper_rois)
         pred_labels = np.argmax(hyper_cls_score, axis=1)
-        self.total_postives += np.shape(np.equal(hyper_labels.astype(np.int16), pred_labels).nonzero())[1]
-        train_accuracy = 1.0 * self.total_postives / self.total_objects
+        self.total_positive += np.shape(np.equal(hyper_labels.astype(np.int16), pred_labels).nonzero())[1]
+        train_accuracy = 1.0 * self.total_positive / self.total_objects
+
+        feature_shape = np.shape(hyper_features)
+        hyper_features = hyper_features.reshape((feature_shape[1], feature_shape[2], feature_shape[3]))
+        # print 'self.iter_times:{},train_accuracy:{}'.format(self.iter_times,train_accuracy)
         if self.iter_times % self.train_times == 0:
             print '~~~~~~~~~~~~~'
-            print 'train_accuracy:{},{},{}'.format(self.total_postives, self.total_objects, train_accuracy)
+            print 'train_accuracy:{},{},{}'.format(self.total_positive, self.total_objects, train_accuracy)
             print '~~~~~~~~~~~~~'
             self.total_objects = 0
-            self.total_postives = 0
+            self.total_positive = 0
 
-        if train_accuracy > 0.7 and self.iter_times > 70000:
+        if train_accuracy > 0.7 and self.iter_times > 30000:
             for index, gt_box in enumerate(gt_boxes):
-                hyper_cls_score_ = hyper_cls_score[index * hyper_pro_each:(index + 1) * hyper_pro_each]
-                rois_ = hyper_rois[index * hyper_pro_each:(index + 1) * hyper_pro_each, :]
-                pred_label_ = pred_labels[index * hyper_pro_each:(index + 1) * hyper_pro_each]
-                label = int(gt_box[4]) - 1
+                hyper_cls_score_ = hyper_cls_score[
+                                   index * (fg_pro_each + bg_pro_each):(index + 1) * (fg_pro_each + bg_pro_each)]
+                rois_ = hyper_rois[index * (fg_pro_each + bg_pro_each):(index + 1) * (fg_pro_each + bg_pro_each), :]
+                pred_label_ = pred_labels[index * (fg_pro_each + bg_pro_each):(index + 1) * (fg_pro_each + bg_pro_each)]
+                label = int(gt_box[4])
                 gt_score = hyper_cls_score_[0, label]
-                keep = np.where((hyper_cls_score_[:, label]) > gt_score & (pred_label_ == label))[0]
+                gt_roi = rois_[0, :]
+                keep = np.where((hyper_cls_score_[:, label] >= gt_score) & (pred_label_ == label))[0]
                 # print 'hyper_cls_score_:', len(hyper_cls_score_), hyper_cls_score_
                 # print 'hyper_rois_', len(rois_), rois_
                 # print 'gt_score:', gt_score
                 # print 'keep:', keep
 
                 if len(keep) > 1:
-                    # print '******************* find one   *****************'
-                    # print self.iter_times, "___________________"
                     rois_ = rois_[keep, :]
                     hyper_cls_score_ = hyper_cls_score_[keep, :]
 
-                    keep = hyper_cls_score_.ravel().argsort()[::-1]
-                    rois_ = rois_[keep, :]
-                    hyper_cls_score_ = hyper_cls_score_[keep, :]
+                    order = hyper_cls_score_[:, label].argsort()[::-1]
+                    rois_ = rois_[order, :]
+                    hyper_cls_score_ = hyper_cls_score_[order, :]
 
-                    print '________hyper_cls_score________'
-                    print hyper_cls_score_
-                    print '________hyper_cls_score________'
-                    best_score = hyper_cls_score_[0]
+                    # print '________hyper_cls_score________'
+                    # print hyper_cls_score_[:, label]
+                    # print '________hyper_cls_score________'
+                    best_score = hyper_cls_score_[0, label]
                     best_roi = rois_[0]
                     for i, rois_i in enumerate(rois_):
                         # if highest score bounding boxes contained another one, don't consider this one
-                        if (best_roi[1] <= rois_i[1] and best_roi[2] <= rois_i[2]
-                            and best_roi[3] >= rois_i[3] and best_roi[4] >= rois_i[4]):
-                            if np.abs(best_score / hyper_cls_score_[i]) <= 1.05:
-                                best_score = hyper_cls_score_[i]
-                                best_roi = rois_i
+                        # if (best_roi[1] <= rois_i[1] and best_roi[2] <= rois_i[2]
+                        #     and best_roi[3] >= rois_i[3] and best_roi[4] >= rois_i[4]):
+                        if np.abs(best_score / hyper_cls_score_[i, label]) <= 1.05:
+                            best_score = hyper_cls_score_[i, label]
+                            best_roi = rois_i
+                            # roi = best_roi[1:5]
+                            # fig2, ax2 = plt.subplots(figsize=(12, 12))
+                            # gci = ax2.imshow(np.average(hyper_features, axis=0))
+                            # plt.colorbar(gci, fraction=0.046, pad=0.04)
+                            # ax2.add_patch(
+                            #
+                            #     plt.Rectangle((roi[0], roi[1]),
+                            #                   roi[2] - roi[0],
+                            #                   roi[3] - roi[1], fill=False,
+                            #                   edgecolor='white', linewidth=3,label='best_roi:'+str(best_score))
+                            # )
+                            # for gt in hyper_rois_:
+                            #     gt = gt / self.feat_stride
+                            #     ax2.add_patch(
+                            #
+                            #         plt.Rectangle((gt[0], gt[1]),
+                            #                       gt[2] - gt[0],
+                            #                       gt[3] - gt[1], fill=False,
+                            #                       edgecolor='green', linewidth=2, label='orginal')
+                            #     )
+                            # plt.legend(loc='upper left')
+                            # plt.show()
                     hyper_rois_[index, :] = best_roi[1:5] * self.feat_stride
-                    # print hyper_rois_[index, :], rois_[keep[0], :]
-                else:
+                    if self.iter_times % 200 == 0:
+                        print '****************best roi***********'
+                        print 'gt_score:', gt_score, 'gt_roi:', gt_roi
+                        print 'rois_:', rois_
+                        print 'hyper_score:', hyper_cls_score_[:, label]
+                        print 'best_roi:', best_roi, 'best_score:', best_score
+                        print '***********************************'
+                elif len(rois_) == 1:
                     hyper_rois_[index, :] = rois_[keep[0], 1:5] * self.feat_stride
+
+                    # for p in hyper_rois_:
+                    #     p = p / self.feat_stride
+                    #     ax2.add_patch(
+                    #
+                    #         plt.Rectangle((p[0], p[1]),
+                    #                       p[2] - p[0],
+                    #                       p[3] - p[1], fill=False,
+                    #                       edgecolor='red', linewidth=1,label='pse_ground')
+                    #     )
+
         if len(self.pse_gt_list) < one_epoc:
             self.pse_gt_list.append({'img_index': int(img_index),
                                      'flipped': int(flipped),
@@ -131,10 +175,8 @@ class PseudoOutputLayer(caffe.Layer):
                 self.pse_gt_list.sort(key=take_key)
             elif self.iter_times > one_epoc:
                 save_pse_results(self, int(img_index), int(flipped), hyper_rois_ / im_info[2], one_epoc,
-                                 'classifi_', self.iter_times)
-        # print 'hyper_rois',hyper_rois, hyper_labels
+                                 'classifi_bg', self.iter_times)
         hyper_gt_boxes = np.concatenate((hyper_rois_, hyper_labels_), axis=1)
-        # print hyper_gt_boxes
         top[0].reshape(*hyper_gt_boxes.shape)
         top[0].data[...] = hyper_gt_boxes
 

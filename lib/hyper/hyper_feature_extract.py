@@ -41,7 +41,7 @@ class HyperFeatureExtract(caffe.Layer):
         hyper_feature_map1 = bottom[0].data
         hyper_feature_map2 = bottom[1].data
         hyper_feature_map3 = bottom[2].data
-        conv_features = [bottom[i].data for i in xrange(3, len(bottom))]
+        # conv_features = [bottom[i].data for i in xrange(3, len(bottom))]
         if DEBUG:
             print '+++++++++++++++++++++++++++++++++++++++++++++++++++++'
             print 'hyper_feature_map1: ({})'.format(np.shape(hyper_feature_map1))

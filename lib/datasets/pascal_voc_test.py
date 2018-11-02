@@ -778,7 +778,7 @@ def calculate_positive_boxes(boxes, rpn_bboxes):
 def calculate_corloc_rpn(d):
     cache_file_simu_points = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_points.pkl')
     cache_file_simu_bbox = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_bbox_heatmap.pkl')
-    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_classifi*.pkl')
+    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_classifi2_valid*.pkl')
     view_result = False
     if os.path.exists(cache_file_simu_points):
         with open(cache_file_simu_points, 'rb') as cache_file_simu_points_fid, open(cache_file_simu_bbox,
@@ -977,7 +977,7 @@ if __name__ == '__main__':
     dataset_name = 'voc_2007_trainval'
     _roidb = gt_roidb_with_simu_points('/home/leochang/Downloads/PycharmProjects/py-faster-rcnn/data/cache',
                                        dataset_name)
-    _boxlist = load_selective_search_roidb(dataset_name)
+    # _boxlist = load_selective_search_roidb(dataset_name)
     # average_bounding_boxes(_d, _roidb, _boxlist)
     # heat_map_bounding_boxes(_d, _roidb, _boxlist)
     # calculate_corloc()

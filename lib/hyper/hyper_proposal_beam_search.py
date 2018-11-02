@@ -7,6 +7,7 @@
 
 import caffe
 import numpy as np
+import numpy.random as npr
 import yaml
 from fast_rcnn.config import cfg
 from generate_anchors import generate_anchors
@@ -49,6 +50,7 @@ class ProposalBeamSearch(caffe.Layer):
         gt_boxes = bottom[5].data
         # hyper_features = bottom[6].data
         scores = bottom[6].data[:, self._num_anchors:, :, :]
+        # hyper_features = bottom[7].data
         cfg_key = str(self.phase)  # either 'TRAIN' or 'TEST'
         pre_nms_topN = cfg[
             cfg_key].RPN_PRE_NMS_TOP_N  # 12000 Number of top scoring boxes to keep before apply NMS to RPN proposals
@@ -57,6 +59,8 @@ class ProposalBeamSearch(caffe.Layer):
         nms_thresh = cfg[cfg_key].RPN_NMS_THRESH  # 0.7 NMS threshold used on RPN proposals
         min_size = cfg[
             cfg_key].RPN_MIN_SIZE  # 16 Proposal height and width both need to be greater than RPN_MIN_SIZE (at orig image scale)
+        # feature_shape = np.shape(hyper_features)
+        # hyper_features = hyper_features.reshape((feature_shape[1], feature_shape[2], feature_shape[3]))
         if DEBUG:
             print 'im_size: ({}, {})'.format(im_info[0], im_info[1])
             print 'scale: {}'.format(im_info[2])
@@ -84,74 +88,112 @@ class ProposalBeamSearch(caffe.Layer):
         anchors = self._anchors.reshape((1, A, 4)) + \
                   shifts.reshape((1, K, 4)).transpose((1, 0, 2))
         anchors = anchors.reshape((K * A, 4))
-        scores = scores.transpose((0, 2, 3, 1)).reshape((-1, 1))
-        proposals = anchors.astype(np.float, copy=False)
+        scores_ori = scores.transpose((0, 2, 3, 1)).reshape((-1, 1))
+        proposals_ori = anchors.astype(np.float, copy=False)
+
         if DEBUG:
             print 'num anchors:{}'.format(np.shape(anchors))
-            print 'num proposals:{}'.format(np.shape(proposals))
-        proposals = clip_boxes(proposals, im_info[:2])
-        keep = _filter_boxes(proposals, min_size * im_info[2])
-        proposals = proposals[keep, :]
-        scores = scores[keep]
-        order = scores.ravel().argsort()[::-1]
-        if pre_nms_topN > 0:
-            order = order[:30000]
-        proposals = proposals[order, :]
-        scores = scores[order]
-        # print 'proposals_num_before nums:{}'.format(len(proposals))
-        keep = nms(np.hstack((proposals.astype(np.float32), scores.astype(np.float32))), 0.8)
-        if post_nms_topN > 0:
-            keep = keep[:post_nms_topN]
-        proposals = proposals[keep, :]
-        scores = scores[keep]
-        # print 'proposals_num_after nums:{}'.format(len(proposals))
-        # print 'len(gt_boxes):{},{}'.format(len(gt_boxes), gt_boxes)
-        total_boxes_per_image = 128
-        hyper_pro_each = total_boxes_per_image / len(gt_boxes)
-        hyper_proposal_number = hyper_pro_each * len(gt_boxes)
-        hyper_proposals = np.zeros((hyper_proposal_number + len(gt_boxes), 4))
-        hyper_labels = np.zeros((hyper_proposal_number + len(gt_boxes),))
+            print 'num proposals_ori:{}'.format(np.shape(proposals_ori))
+        proposals_ori = clip_boxes(proposals_ori, im_info[:2])
+        keep = _filter_boxes(proposals_ori, min_size * im_info[2])
+
+        proposals_ori = proposals_ori[keep, :]
+        scores_ori = scores_ori[keep]
 
         index = 0
+        fg_fraction = 0.5  # positive vs negative =1
+        fg_boxes_per_image = 64
+        bg_boxes_per_image = 64
+        fg_pro_each = fg_boxes_per_image / len(gt_boxes)
+        fg_pro_num = fg_pro_each * len(gt_boxes)
+        bg_pro_each = bg_boxes_per_image / len(gt_boxes)
+        bg_pro_num = bg_pro_each * len(gt_boxes)
+        hyper_proposals = np.zeros((fg_pro_num + bg_pro_num + len(gt_boxes), 4))
+        hyper_labels = np.zeros((fg_pro_num + bg_pro_num + len(gt_boxes),))
+
         for gt_box in gt_boxes:
-            label = gt_box[4] - 1
-            # gt_box = gt_box[0:4] / self._feat_stride  # feature map size
-            overlaps = bbox_overlaps(proposals.astype(np.float),
+            label = gt_box[4]
+            overlaps = bbox_overlaps(proposals_ori.astype(np.float),
                                      np.array(gt_box[0:4]).reshape((1, 4)).astype(np.float))
             thresh = 0.6
-
             keep = np.where(np.array(overlaps) >= thresh)[0]
-            while len(keep) < hyper_pro_each and thresh > 0.4:
+            while len(keep) < fg_pro_each and thresh > 0.4:
                 thresh -= 0.05
                 keep = np.where(np.array(overlaps) >= thresh)[0]
-            if thresh > 0.4:
-                proposals_ = proposals[keep, :]
-                scores_ = scores[keep, :]
+            proposals = proposals_ori[keep, :]
+            scores = scores_ori[keep]
 
-                order = scores_.ravel().argsort()[::-1]
-                order = order[:hyper_pro_each]
+            order = scores.ravel().argsort()[::-1]
+            if pre_nms_topN > 0:
+                order = order[:pre_nms_topN]
+            proposals = proposals[order, :]
+            scores = scores[order]
 
-                proposals_ = proposals_[order, :]
-                # print 'len(proposals_)"{}:,hyper_pro_each:{}'.format(len(proposals_), hyper_pro_each)
-                scores_ = scores_[order]
-                hyper_proposals[index, :] = np.array(gt_box[0:4]).reshape((1, 4))
-                hyper_labels[index] = label
-                # print '_____', gt_box, hyper_proposals[index, :], label
-                index += 1
-                hyper_proposals[index:index + hyper_pro_each, :] = proposals_[:hyper_pro_each]
-                hyper_labels[index:index + hyper_pro_each] = label
-                index += hyper_pro_each
-            else:
-                hyper_proposals[index, :] = np.array(gt_box[0:4]).reshape((1, 4))
-                hyper_labels[index] = label
-                # print '_____', gt_box, hyper_proposals[index, :], label
-                index += 1
-                hyper_proposals[index:index + hyper_pro_each, :] = np.array(gt_box[0:4]).reshape((1, 4))
-                hyper_labels[index:index + hyper_pro_each] = label
-                index += hyper_pro_each
-            keep = np.where(np.array(overlaps) < thresh)[0]
+            keep = nms(np.hstack((proposals.astype(np.float32), scores.astype(np.float32))), nms_thresh)
+            while len(keep) < fg_pro_each and nms_thresh < 0.9:
+                nms_thresh += 0.05
+                keep = nms(np.hstack((proposals.astype(np.float32), scores.astype(np.float32))), nms_thresh)
+            nms_thresh = 0.7
             proposals = proposals[keep, :]
-            scores = scores[keep, :]
+            scores = scores[keep]
+
+            # fig2, ax2 = plt.subplots(figsize=(12, 12))
+            # gci = ax2.imshow(np.average(hyper_features, axis=0))
+            # plt.colorbar(gci, fraction=0.046, pad=0.04)
+            # for p in proposals:
+            #     p = p / self._feat_stride
+            #     ax2.add_patch(
+            #
+            #         plt.Rectangle((p[0], p[1]),
+            #                       p[2] - p[0],
+            #                       p[3] - p[1], fill=False,
+            #                       edgecolor='white', linewidth=1)
+            #     )
+            # plt.title('hyper_rpn_conv_features')
+            # plt.show()
+
+            proposals_ = proposals
+            scores_ = scores
+            order = scores_.ravel().argsort()[::-1]
+            order = order[:fg_pro_each]
+            proposals_ = proposals_[order, :]
+
+            # positive examples
+            hyper_proposals[index, :] = np.array(gt_box[0:4]).reshape((1, 4))
+            hyper_labels[index] = label
+            index += 1
+            if len(proposals_) >= fg_pro_each:
+                hyper_proposals[index:index + fg_pro_each, :] = proposals_[:fg_pro_each]
+            else:
+                hyper_proposals[index:index + len(proposals_), :] = proposals_[:len(proposals_)]
+                hyper_proposals[index + len(proposals_):fg_pro_each, :] = np.array(gt_box[0:4]).reshape((1, 4))
+            hyper_labels[index:index + fg_pro_each] = label
+            index += fg_pro_each
+
+            # negative examples
+            keep = np.where((np.array(overlaps) > 0.1) & (np.array(overlaps) < 0.3))[0]
+            # print 'len(negative):', len(keep)
+            bg_proposals = proposals_ori[keep, :]
+            if len(keep) >= bg_pro_each:
+                hyper_proposals[index:index + bg_pro_each, :] = bg_proposals[:bg_pro_each]
+            else:
+                iou_thresh = 0.35
+                while len(keep) < bg_pro_each and iou_thresh < 0.5:
+                    keep = np.where((np.array(overlaps) > 0.1) & (np.array(overlaps) < iou_thresh))[0]
+                    iou_thresh += 0.05
+                if len(keep) < bg_pro_each:
+                    bg_proposals = proposals_ori[0:bg_pro_each, :]
+                else:
+                    bg_proposals = proposals_ori[keep, :]
+
+                print 'len(bg_proposals):', len(bg_proposals), iou_thresh
+                hyper_proposals[index:index + bg_pro_each, :] = bg_proposals[:bg_pro_each]
+            hyper_labels[index:index + bg_pro_each] = 0  # set 0 as background
+            index += bg_pro_each
+            keep = np.where(np.array(overlaps) < thresh)[0]
+            proposals_ori = proposals_ori[keep, :]
+            scores_ori = scores_ori[keep, :]
+
         # print hyper_labels, hyper_proposals
         # for index, gt_box in enumerate(gt_boxes):
         #     label = gt_box[4] - 1  # we don't have background class, so we set label minus 1
@@ -204,11 +246,9 @@ class ProposalBeamSearch(caffe.Layer):
         #     # print proposals
         #     # plt.title('hyper_rpn_conv_features')
         #     # plt.show()
-
         batch_inds = np.zeros((hyper_proposals.shape[0], 1), dtype=np.float32)
-        # hyper_proposals = hyper_proposals/im_info[2]
         blob = np.hstack((batch_inds, hyper_proposals.astype(np.float32, copy=False) / self._feat_stride))
-        # print 'hyper_proposal', np.shape(hyper_labels), np.shape(blob),hyper_labels
+        # print 'hyper_proposal', hyper_proposals/ self._feat_stride,  hyper_labels
         top[0].reshape(*(blob.shape))
         top[0].data[...] = blob
         top[1].reshape(*(hyper_labels.shape))
@@ -303,3 +343,46 @@ def get_grids(height, width, starty, startx, feature_shape):
                                  np.hstack((xv2.reshape((grid_number ** 2, 1)),
                                             yv2.reshape((grid_number ** 2, 1))))))).astype(np.uint16)
     return merged
+
+
+def _sample_negative_rois(all_rois, gt_boxes, fg_rois_per_image, rois_per_image, ):
+    """Generate a random sample of RoIs comprising foreground and background
+    examples.
+    """
+    # overlaps: (rois x gt_boxes)
+    overlaps = bbox_overlaps(
+        np.ascontiguousarray(all_rois[:, 1:5], dtype=np.float),
+        np.ascontiguousarray(gt_boxes[:, :4], dtype=np.float))
+    gt_assignment = overlaps.argmax(axis=1)
+    max_overlaps = overlaps.max(axis=1)
+    labels = gt_boxes[gt_assignment, 4]
+
+    # Select foreground RoIs as those with >= FG_THRESH overlap
+    fg_inds = np.where(max_overlaps >= cfg.TRAIN.FG_THRESH)[0]
+    # Guard against the case when an image has fewer than fg_rois_per_image
+    # foreground RoIs
+    fg_rois_per_this_image = min(fg_rois_per_image, fg_inds.size)
+    fg_rois_per_this_image = int(fg_rois_per_this_image)
+    # Sample foreground regions without replacement
+    if fg_inds.size > 0:
+        fg_inds = npr.choice(fg_inds, size=fg_rois_per_this_image, replace=False)
+
+    # Select background RoIs as those within [BG_THRESH_LO, BG_THRESH_HI)
+    bg_inds = np.where((max_overlaps < cfg.TRAIN.BG_THRESH_HI) &
+                       (max_overlaps >= cfg.TRAIN.BG_THRESH_LO))[0]
+    # Compute number of background RoIs to take from this image (guarding
+    # against there being fewer than desired)
+    bg_rois_per_this_image = rois_per_image - fg_rois_per_this_image
+    bg_rois_per_this_image = min(bg_rois_per_this_image, bg_inds.size)
+    # Sample background regions without replacement
+    if bg_inds.size > 0:
+        bg_inds = npr.choice(bg_inds, size=bg_rois_per_this_image, replace=False)
+
+    # The indices that we're selecting (both fg and bg)
+    keep_inds = np.append(fg_inds, bg_inds)
+    # Select sampled values from various arrays:
+    labels = labels[keep_inds]
+    # Clamp labels for the background RoIs to 0
+    labels[fg_rois_per_this_image:] = 0
+    rois = all_rois[keep_inds]
+    return labels, rois,

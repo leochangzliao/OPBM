@@ -44,8 +44,10 @@ class SolverWrapper(object):
         if pretrained_model is not None:
             print ('Loading pretrained model '
                    'weights from {:s}').format(pretrained_model)
+            # solver_state_file = '/home/leochang/Downloads/PycharmProjects' \
+            #                     '/py-faster-rcnn/vgg16_faster_rcnn_simu_rpn_iter_70000.solverstate'
+            # self.solver.restore(solver_state_file)
             self.solver.net.copy_from(pretrained_model)
-
         self.solver_param = caffe_pb2.SolverParameter()
         with open(solver_prototxt, 'rt') as f:
             pb2.text_format.Merge(f.read(), self.solver_param)

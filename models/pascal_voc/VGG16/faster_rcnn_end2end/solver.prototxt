@@ -2,9 +2,9 @@ train_net: "models/pascal_voc/VGG16/faster_rcnn_end2end/train_pse_bbox_hyper_fea
 base_lr: 0.001
 lr_policy: "step"
 gamma: 0.1
-stepsize: 50000
-display: 100
-average_loss: 100
+stepsize: 30000
+display: 20
+average_loss: 100 #Display the loss averaged over the last average_loss iterations
 # iter_size: 1
 momentum: 0.9
 weight_decay: 0.0005
