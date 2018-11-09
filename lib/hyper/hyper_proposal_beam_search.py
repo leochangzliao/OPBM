@@ -35,8 +35,8 @@ class ProposalBeamSearch(caffe.Layer):
         self._num_anchors = self._anchors.shape[0]
         if DEBUG:
             print 'feat_stride: {}'.format(self._feat_stride)
-        top[0].reshape(1, 5)
-        top[1].reshape(1, 1)
+        top[0].reshape(1, 5, 1, 1)
+        top[1].reshape(1, 1, 1, 1)
 
     def forward(self, bottom, top):
         # assert bottom[0].data.shape[0] == 1, \
@@ -50,7 +50,7 @@ class ProposalBeamSearch(caffe.Layer):
         gt_boxes = bottom[5].data
         # hyper_features = bottom[6].data
         scores = bottom[6].data[:, self._num_anchors:, :, :]
-        # hyper_features = bottom[7].data
+        hyper_features = bottom[7].data
         cfg_key = str(self.phase)  # either 'TRAIN' or 'TEST'
         pre_nms_topN = cfg[
             cfg_key].RPN_PRE_NMS_TOP_N  # 12000 Number of top scoring boxes to keep before apply NMS to RPN proposals
@@ -65,8 +65,8 @@ class ProposalBeamSearch(caffe.Layer):
             print 'im_size: ({}, {})'.format(im_info[0], im_info[1])
             print 'scale: {}'.format(im_info[2])
             # print 'feature_shape: {}'.format(np.shape(hyper_features))
-        # feature_shape = np.shape(hyper_features)
-        # hyper_features = hyper_features.reshape((feature_shape[1], feature_shape[2], feature_shape[3]))
+        feature_shape = np.shape(hyper_features)
+        hyper_features = hyper_features.reshape((feature_shape[1], feature_shape[2], feature_shape[3]))
         # hyper_proposals = np.zeros((len(gt_boxes) * 7, 4))
         # hyper_labels = np.zeros((len(gt_boxes) * 7,))
 
@@ -160,6 +160,14 @@ class ProposalBeamSearch(caffe.Layer):
 
             # positive examples
             hyper_proposals[index, :] = np.array(gt_box[0:4]).reshape((1, 4))
+            # gt_box = gt_box/self._feat_stride
+            # ax2.add_patch(
+            #
+            #     plt.Rectangle((gt_box[0], gt_box[1]),
+            #                   gt_box[2] - gt_box[0],
+            #                   gt_box[3] - gt_box[1], fill=False,
+            #                   edgecolor='green', linewidth=1)
+            # )
             hyper_labels[index] = label
             index += 1
             if len(proposals_) >= fg_pro_each:
@@ -169,13 +177,22 @@ class ProposalBeamSearch(caffe.Layer):
                 hyper_proposals[index + len(proposals_):fg_pro_each, :] = np.array(gt_box[0:4]).reshape((1, 4))
             hyper_labels[index:index + fg_pro_each] = label
             index += fg_pro_each
-
+            # for p in hyper_proposals[0:index,:]:
+            #     p = p / self._feat_stride
+            #     ax2.add_patch(
+            #
+            #         plt.Rectangle((p[0], p[1]),
+            #                       p[2] - p[0],
+            #                       p[3] - p[1], fill=False,
+            #                       edgecolor='white', linewidth=1)
+            #     )
             # negative examples
             keep = np.where((np.array(overlaps) > 0.1) & (np.array(overlaps) < 0.3))[0]
             # print 'len(negative):', len(keep)
             bg_proposals = proposals_ori[keep, :]
             if len(keep) >= bg_pro_each:
-                hyper_proposals[index:index + bg_pro_each, :] = bg_proposals[:bg_pro_each]
+                bg_random = np.random.choice(keep, bg_pro_each, replace=False)
+                hyper_proposals[index:index + bg_pro_each, :] = proposals_ori[bg_random, :]
             else:
                 iou_thresh = 0.35
                 while len(keep) < bg_pro_each and iou_thresh < 0.5:
@@ -184,10 +201,24 @@ class ProposalBeamSearch(caffe.Layer):
                 if len(keep) < bg_pro_each:
                     bg_proposals = proposals_ori[0:bg_pro_each, :]
                 else:
-                    bg_proposals = proposals_ori[keep, :]
-
+                    bg_random = np.random.choice(keep, bg_pro_each, replace=False)
+                    bg_proposals = proposals_ori[bg_random, :]
                 print 'len(bg_proposals):', len(bg_proposals), iou_thresh
+
                 hyper_proposals[index:index + bg_pro_each, :] = bg_proposals[:bg_pro_each]
+
+            # for p in hyper_proposals[index:index + bg_pro_each, :]:
+            #     p = p / self._feat_stride
+            #     ax2.add_patch(
+            #
+            #         plt.Rectangle((p[0], p[1]),
+            #                       p[2] - p[0],
+            #                       p[3] - p[1], fill=False,
+            #                       edgecolor='yellow', linewidth=1)
+            #     )
+            # plt.title('hyper_rpn_conv_features')
+            # plt.show()
+
             hyper_labels[index:index + bg_pro_each] = 0  # set 0 as background
             index += bg_pro_each
             keep = np.where(np.array(overlaps) < thresh)[0]
@@ -249,6 +280,8 @@ class ProposalBeamSearch(caffe.Layer):
         batch_inds = np.zeros((hyper_proposals.shape[0], 1), dtype=np.float32)
         blob = np.hstack((batch_inds, hyper_proposals.astype(np.float32, copy=False) / self._feat_stride))
         # print 'hyper_proposal', hyper_proposals/ self._feat_stride,  hyper_labels
+        blob = blob.reshape((len(hyper_proposals), 5, 1, 1))
+        hyper_labels = hyper_labels.reshape((len(hyper_labels), 1, 1, 1))
         top[0].reshape(*(blob.shape))
         top[0].data[...] = blob
         top[1].reshape(*(hyper_labels.shape))

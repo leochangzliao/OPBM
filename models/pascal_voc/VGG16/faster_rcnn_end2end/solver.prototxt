@@ -1,4 +1,4 @@
-train_net: "models/pascal_voc/VGG16/faster_rcnn_end2end/train_pse_bbox_hyper_feature_classfication.prototxt"
+train_net: "models/pascal_voc/VGG16/faster_rcnn_end2end/train_pse_bbox_hyper_feature_classfication_psroi.prototxt"
 base_lr: 0.001
 lr_policy: "step"
 gamma: 0.1

@@ -422,14 +422,14 @@ def filter_selective_boxlist_average(im, simu_points, i_gt, boxlist, i):
 
 def filter_selective_boxlist_heatmap(im, simu_points, i_gt, boxlist, i):
     filted_boxlist = []
-    Top_N_Boxes_small = 5
-    Top_N_Boxes_big = 10
+    Top_N_Boxes_small = 8
+    Top_N_Boxes_big = 8
     aspetct_ratio1 = 0.5
     aspetct_ratio2 = 1
     aspetct_ratio3 = 2
-    area_ratio_small = 0.1
-    area_ratio_big_low = 0.1
-    area_ratio_big_high = 0.85
+    area_ratio_small = 1
+    area_ratio_big_low = 0.
+    area_ratio_big_high = 1.
     print area_ratio_big_low, area_ratio_small, Top_N_Boxes_small, Top_N_Boxes_big, area_ratio_big_high
 
     def take_elem(elem):
@@ -549,22 +549,17 @@ def filter_selective_boxlist_heatmap(im, simu_points, i_gt, boxlist, i):
     if int(simu_points[i_gt, 2]) == 1:  # small object
         if len(filted_boxlist) >= Top_N_Boxes_small:
             return np.array([b['boxes'] for b in filted_boxlist[:Top_N_Boxes_small]]).reshape(
-                (Top_N_Boxes_small, 4)), np.array(
-                [b['boxes'] for b in filted_boxlist[:len(filted_boxlist) / 2]]).reshape(
-                (len(filted_boxlist) / 2, 4))
+                (Top_N_Boxes_small, 4))
         else:
             return np.array([b['boxes'] for b in filted_boxlist[:len(filted_boxlist)]]).reshape(
-                (len(filted_boxlist), 4)), np.array([b['boxes'] for b in filted_boxlist]).reshape(
-                (len(filted_boxlist) / 2, 4))
+                (len(filted_boxlist), 4))
     else:
         if len(filted_boxlist) >= Top_N_Boxes_big:
             return np.array([b['boxes'] for b in filted_boxlist[:Top_N_Boxes_big]]).reshape(
-                (Top_N_Boxes_big, 4)), np.array([b['boxes'] for b in filted_boxlist[:len(filted_boxlist) / 2]]).reshape(
-                (len(filted_boxlist) / 2, 4))
+                (Top_N_Boxes_big, 4))
         else:
             return np.array([b['boxes'] for b in filted_boxlist[:len(filted_boxlist)]]).reshape(
-                (len(filted_boxlist), 4)), np.array([b['boxes'] for b in filted_boxlist]).reshape(
-                (len(filted_boxlist) / 2, 4))
+                (len(filted_boxlist), 4))
 
 
 def get_grid_bbox(im):
@@ -587,7 +582,7 @@ def get_grid_bbox(im):
 def heat_map_bounding_boxes(d, roidb, boxlist):
     import matplotlib.pyplot as plt
     simu_gt_boxeslist = []
-    view_result = True
+    view_result = False
     _t = {'total_time': Timer(), 'one_gt': Timer(),
           'filter_selective_boxlist': Timer(), 'get_grid_bbox': Timer(),
           'filter_grid': Timer(), 'bbox_overlaps_grid': Timer()}
@@ -608,15 +603,15 @@ def heat_map_bounding_boxes(d, roidb, boxlist):
 
             # show selective bounding box filtered
             # _t['filter_selective_boxlist'].tic()
-            filted_boxlist, full_filterd_boxlist = filter_selective_boxlist_heatmap(im, simu_points.astype(np.float),
+            filted_boxlist = filter_selective_boxlist_heatmap(im, simu_points.astype(np.float),
                                                                                     i_gt, boxlist, i_roi)
             averge_boxes = np.average(filted_boxlist, axis=0)
             # averge_boxes, filted_boxlist = filter_selective_boxlist_heatmap(simu_points.astype(np.float), i_gt, boxlist,
             #                                                                 i_roi)
             simu_gt_boxes[i_gt, :] = [averge_boxes[0], averge_boxes[1], averge_boxes[2], averge_boxes[3]]
 
-            vis_results2(d, i_roi, gt_point, simu_point, gt_bbox, filted_boxlist, full_filterd_boxlist, averge_boxes,
-                         view_result)
+            # vis_results2(d, i_roi, gt_point, simu_point, gt_bbox, filted_boxlist, averge_boxes,
+            #              view_result)
             '''
             _t['filter_selective_boxlist'].toc()
             # visualize iou heatmap
@@ -736,12 +731,27 @@ def calculate_corloc():
                     total_boxes = 0
                     boxes_over_thresh = 0
                     postive_picture = 0
+                    objects = np.zeros((20, 2))
                     for index in xrange(len(roidb_simu_points)):
                         # print index
                         gt_bboxes = roidb_simu_points[index]['boxes']
                         simu_bboxes = roidb_simu_bbox[index]
                         assert np.shape(gt_bboxes) == np.shape(simu_bboxes)
                         overlaps = bbox_overlaps(gt_bboxes.astype(np.float), simu_bboxes.astype(np.float))
+
+                        overlap_dia = overlaps.diagonal().copy()
+                        gt_classes = roidb_simu_points[index]['gt_classes']
+                        counted_class = []
+                        for i_clss, gt_class_ in enumerate(gt_classes):
+                            if int(gt_class_) not in counted_class:
+                                if overlap_dia[i_clss] >= 0.5:
+                                    objects[int(gt_class_) - 1, :] += 1
+                                    counted_class.append(int(gt_class_))
+
+                        for i_clss, gt_class_ in enumerate(gt_classes):
+                            if int(gt_class_) not in counted_class:
+                                objects[int(gt_class_) - 1, -1] += 1
+                                counted_class.append(int(gt_class_))
                         # print overlaps,overlaps.diagonal(),len(overlaps.diagonal())
                         import warnings
                         warnings.filterwarnings('error')
@@ -763,6 +773,9 @@ def calculate_corloc():
                     print 'LocCor=', boxes_over_thresh, total_boxes, 1.0 * boxes_over_thresh / total_boxes
                     print 'LocCor2=', postive_picture, len(roidb_simu_points), 1.0 * postive_picture / len(
                         roidb_simu_points)
+                    print objects
+                    print np.sum(objects,axis=0)
+                    print 'true LocCor:', objects[:, 0] / objects[:, 1], np.mean(objects[:, 0] / objects[:, 1])
 
 
 def calculate_positive_boxes(boxes, rpn_bboxes):
@@ -778,7 +791,7 @@ def calculate_positive_boxes(boxes, rpn_bboxes):
 def calculate_corloc_rpn(d):
     cache_file_simu_points = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_points.pkl')
     cache_file_simu_bbox = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_bbox_heatmap.pkl')
-    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_classifi2_valid*.pkl')
+    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_classifi_bg_center_score*.pkl')
     view_result = False
     if os.path.exists(cache_file_simu_points):
         with open(cache_file_simu_points, 'rb') as cache_file_simu_points_fid, open(cache_file_simu_bbox,
@@ -806,7 +819,7 @@ def calculate_corloc_rpn(d):
                             im = cv2.imread(img_path)
                             width = im.shape[1]
                             im = im[:, :, (2, 1, 0)]
-                            total_boxes += len(gt_bboxes)*2
+                            total_boxes += len(gt_bboxes) * 2
                             try:
                                 # if (rpn_bboxes1['rpn_simu_gt_boxes'][:, 4].astype(np.int) == 1).all():
                                 if rpn_bboxes1['flipped'] == 1:
@@ -977,7 +990,7 @@ if __name__ == '__main__':
     dataset_name = 'voc_2007_trainval'
     _roidb = gt_roidb_with_simu_points('/home/leochang/Downloads/PycharmProjects/py-faster-rcnn/data/cache',
                                        dataset_name)
-    # _boxlist = load_selective_search_roidb(dataset_name)
+    _boxlist = load_selective_search_roidb(dataset_name)
     # average_bounding_boxes(_d, _roidb, _boxlist)
     # heat_map_bounding_boxes(_d, _roidb, _boxlist)
     # calculate_corloc()

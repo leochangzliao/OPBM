@@ -24,7 +24,7 @@ logging.basicConfig(filename=cache_path + 'msg.log')
 DEBUG = True
 
 
-class PseudoOutputLayer(caffe.Layer):
+class PsroiOutputLayer(caffe.Layer):
     """
     Outputs object detection proposals by applying estimated bounding-box
     transformations to a set of regular boxes (called "anchors").
@@ -41,23 +41,19 @@ class PseudoOutputLayer(caffe.Layer):
         self.feat_stride = layer_params['feat_stride']  # feat_stride =4
         if DEBUG:
             print 'feat_stride: {:}'.format(self.feat_stride)
-            # rois blob: holds R regions of interest, each is a 5-tuple
-            # (n, x1, y1, x2, y2) specifying an image batch index n and a
-            # rectangle (x1, y1, x2, y2)
         top[0].reshape(1, 5)
 
     def forward(self, bottom, top):
         hyper_rois = bottom[0].data
-        hyper_cls_score = bottom[1].data
-        hyper_pool = bottom[2].data
-        hyper_labels = bottom[3].data
-        gt_boxes = bottom[4].data
-        flipped = bottom[5].data
-        img_index = bottom[6].data
-        im_info = bottom[7].data[0]
-        hyper_features = bottom[8].data
-        img_data = bottom[9].data
-        simu_points = bottom[10].data
+        psroi_cls_score = bottom[1].data
+        hyper_labels = bottom[2].data
+        gt_boxes = bottom[3].data
+        flipped = bottom[4].data
+        img_index = bottom[5].data
+        im_info = bottom[6].data[0]
+        hyper_features = bottom[7].data
+        img_data = bottom[8].data
+        simu_points = bottom[9].data
         # img_data_shape = np.shape(img_data)
         # # print np.shape(img_data)
         # img_data = img_data.reshape((img_data_shape[1], img_data_shape[2], img_data_shape[3]))
@@ -65,16 +61,20 @@ class PseudoOutputLayer(caffe.Layer):
         # img_data = img_data.transpose((1, 2, 0))
         # img_data += cfg.PIXEL_MEANS
         # img_data = img_data[:, :, (2, 1, 0)]
-
+        score_shape = np.shape(psroi_cls_score)
+        rois_shape = np.shape(hyper_rois)
+        hyper_labels_shape = np.shape(hyper_labels)
+        psroi_cls_score = psroi_cls_score.reshape((score_shape[0], score_shape[1]))
+        hyper_rois = hyper_rois.reshape((rois_shape[0], rois_shape[1]))
+        hyper_labels = hyper_labels.reshape((hyper_labels_shape[0],))
         one_epoc = 10022
         if DEBUG and self.iter_times % 200 == 0:
             print '+++++++++++++++++++++++++++++++++++++++++++++++++++++'
             print 'hyper_rois: {},{}'.format(len(hyper_rois), np.shape(hyper_rois))
-            print 'hyper_cls_score:{},{}'.format(np.shape(hyper_cls_score),
-                                                 np.argmax(hyper_cls_score, axis=1))
+            print 'hyer_labels:{},{}'.format(len(hyper_labels),np.shape(hyper_labels))
+            print 'psroi_cls_score:{},{}'.format(np.shape(psroi_cls_score), psroi_cls_score[0])
             print 'hyper_labels:{}'.format(hyper_labels)
-            print 'pred_labels:{}'.format(np.argmax(hyper_cls_score, axis=1))
-            print 'hyper_pool:{}'.format(np.shape(hyper_pool))
+            print 'pred_labels:{}'.format(np.argmax(psroi_cls_score, axis=1))
             # print 'roi data labels:{},{}'.format(len(labels),np.shape(labels))
             print '+++++++++++++++++++++++++++++++++++++++++++++++++++++'
         per_image_classes = len(gt_boxes)
@@ -84,10 +84,9 @@ class PseudoOutputLayer(caffe.Layer):
         hyper_labels_ = hyper_labels[::fg_pro_each + bg_pro_each].reshape((len(gt_boxes), 1))
         self.iter_times += 1
         self.total_objects += len(hyper_rois)
-        pred_labels = np.argmax(hyper_cls_score, axis=1)
+        pred_labels = np.argmax(psroi_cls_score, axis=1)
         self.total_positive += np.shape(np.equal(hyper_labels.astype(np.int16), pred_labels).nonzero())[1]
         train_accuracy = 1.0 * self.total_positive / self.total_objects
-
         feature_shape = np.shape(hyper_features)
         hyper_features = hyper_features.reshape((feature_shape[1], feature_shape[2], feature_shape[3]))
         # print 'self.iter_times:{},train_accuracy:{}'.format(self.iter_times,train_accuracy)
@@ -100,10 +99,10 @@ class PseudoOutputLayer(caffe.Layer):
 
         # fig2, ax2 = plt.subplots(figsize=(12, 12))
         # ax2.imshow(img_data.astype(np.uint8), aspect='equal')
-        if train_accuracy > 0.7 and self.iter_times > 0:
+        if train_accuracy > 0.7 and self.iter_times > 30000:
             for index, gt_box in enumerate(gt_boxes):
                 simu_point = simu_points[index]
-                hyper_cls_score_ = hyper_cls_score[
+                hyper_cls_score_ = psroi_cls_score[
                                    index * (fg_pro_each + bg_pro_each):(index + 1) * (fg_pro_each + bg_pro_each)]
                 rois_ = hyper_rois[index * (fg_pro_each + bg_pro_each):(index + 1) * (fg_pro_each + bg_pro_each), :]
                 pred_label_ = pred_labels[index * (fg_pro_each + bg_pro_each):(index + 1) * (fg_pro_each + bg_pro_each)]
@@ -135,7 +134,7 @@ class PseudoOutputLayer(caffe.Layer):
                         # if highest score bounding boxes contained another one, don't consider this one
                         # if (best_roi[1] <= rois_i[1] and best_roi[2] <= rois_i[2]
                         #     and best_roi[3] >= rois_i[3] and best_roi[4] >= rois_i[4]):
-                        if np.abs(best_score / hyper_cls_score_[i, label]) <= 1.05:
+                        if np.abs(best_score / hyper_cls_score_[i, label]) <= 1.5:
                             best_score = hyper_cls_score_[i, label]
                             best_roi = rois_i
 
@@ -172,13 +171,13 @@ class PseudoOutputLayer(caffe.Layer):
                 elif len(rois_) == 1:
                     hyper_rois_[index, :] = rois_[keep[0], 1:5] * self.feat_stride
 
-                # roi = hyper_rois_[index, :]
-                # ax2.add_patch(
-                #     plt.Rectangle((roi[0], roi[1]),
-                #                   roi[2] - roi[0],
-                #                   roi[3] - roi[1], fill=False,
-                #                   edgecolor='white', linewidth=3)
-                # )
+                    # roi = hyper_rois_[index, :]
+                    # ax2.add_patch(
+                    #     plt.Rectangle((roi[0], roi[1]),
+                    #                   roi[2] - roi[0],
+                    #                   roi[3] - roi[1], fill=False,
+                    #                   edgecolor='white', linewidth=3)
+                    # )
 
         # for gt in gt_boxes:
         #     ax2.add_patch(

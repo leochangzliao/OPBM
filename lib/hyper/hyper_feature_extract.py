@@ -34,22 +34,22 @@ class HyperFeatureExtract(caffe.Layer):
             # (n, x1, y1, x2, y2) specifying an image batch index n and a
             # rectangle (x1, y1, x2, y2)
             # top[0].reshape(1, 3)
-        top[0].reshape(1, np.shape(bottom[0].data)[1] * 3, np.shape(bottom[0].data)[2], np.shape(bottom[0].data)[3])
+        top[0].reshape(1, np.shape(bottom[0].data)[1] * 2, np.shape(bottom[0].data)[2], np.shape(bottom[0].data)[3])
         self.current = 0
 
     def forward(self, bottom, top):
-        hyper_feature_map1 = bottom[0].data
-        hyper_feature_map2 = bottom[1].data
-        hyper_feature_map3 = bottom[2].data
-        # conv_features = [bottom[i].data for i in xrange(3, len(bottom))]
+        hyper_feature_map2 = bottom[0].data
+        #hyper_feature_map2 = bottom[1].data
+        hyper_feature_map3 = bottom[1].data
+        # conv_features = [bottom[i].data for i in xrange(2, len(bottom))]
         if DEBUG:
             print '+++++++++++++++++++++++++++++++++++++++++++++++++++++'
-            print 'hyper_feature_map1: ({})'.format(np.shape(hyper_feature_map1))
+            print 'hyper_feature_map1: ({})'.format(np.shape(hyper_feature_map2))
             print 'hyper_feature_map2: {}'.format(np.shape(hyper_feature_map2))
             print 'hyper_feature_map3:{}'.format(np.shape(hyper_feature_map3))
             print '+++++++++++++++++++++++++++++++++++++++++++++++++++++'
-        if np.shape(hyper_feature_map1)[2] is not np.shape(hyper_feature_map3)[2]:
-            shape_diff = np.shape(hyper_feature_map3)[2] - np.shape(hyper_feature_map1)[2]
+        if np.shape(hyper_feature_map2)[2] is not np.shape(hyper_feature_map3)[2]:
+            shape_diff = np.shape(hyper_feature_map3)[2] - np.shape(hyper_feature_map2)[2]
             if shape_diff == 1:
                 hyper_feature_map3 = np.delete(hyper_feature_map3, [0], axis=2)
             elif shape_diff == 2:
@@ -58,8 +58,8 @@ class HyperFeatureExtract(caffe.Layer):
                 hyper_feature_map3 = np.delete(hyper_feature_map3,
                                                [0, np.shape(hyper_feature_map3)[2] - 1,
                                                 np.shape(hyper_feature_map3)[2] - 2], axis=2)
-        if np.shape(hyper_feature_map1)[3] is not np.shape(hyper_feature_map3)[3]:
-            shape_diff = np.shape(hyper_feature_map3)[3] - np.shape(hyper_feature_map1)[3]
+        if np.shape(hyper_feature_map2)[3] is not np.shape(hyper_feature_map3)[3]:
+            shape_diff = np.shape(hyper_feature_map3)[3] - np.shape(hyper_feature_map2)[3]
             if shape_diff == 1:
                 hyper_feature_map3 = np.delete(hyper_feature_map3, [0], axis=3)
             elif shape_diff == 2:
@@ -68,15 +68,14 @@ class HyperFeatureExtract(caffe.Layer):
                 hyper_feature_map3 = np.delete(hyper_feature_map3,
                                                [0, np.shape(hyper_feature_map3)[3] - 1,
                                                 np.shape(hyper_feature_map3)[3] - 2], axis=3)
-        assert np.shape(hyper_feature_map1) == np.shape(hyper_feature_map3)
+        # assert np.shape(hyper_feature_map2) == np.shape(hyper_feature_map3)
         assert np.shape(hyper_feature_map2) == np.shape(hyper_feature_map3)
-        # vis_feature(self, hyper_feature_map1, hyper_feature_map2, hyper_feature_map3, conv_features)
-        # min_ =
-        blob = np.concatenate((hyper_feature_map1, hyper_feature_map2, hyper_feature_map3), axis=1)
+        # vis_feature(self, hyper_feature_map2, hyper_feature_map2, hyper_feature_map3, conv_features)
+        blob = np.concatenate((hyper_feature_map2, hyper_feature_map3), axis=1)
         # print blob.shape, (1, 126, np.shape(hyper_feature_map1)[2], np.shape(hyper_feature_map1)[3])
-        assert blob.shape == (1, np.shape(hyper_feature_map1)[1] + np.shape(hyper_feature_map2)[1] +
+        assert blob.shape == (1, np.shape(hyper_feature_map2)[1] +
                               np.shape(hyper_feature_map3)[1],
-                              np.shape(hyper_feature_map1)[2], np.shape(hyper_feature_map1)[3])
+                              np.shape(hyper_feature_map2)[2], np.shape(hyper_feature_map2)[3])
         top[0].reshape(*(blob.shape))
         top[0].data[...] = blob
 
