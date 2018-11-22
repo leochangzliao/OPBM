@@ -1,4 +1,4 @@
-train_net: "models/pascal_voc/VGG16/faster_rcnn_end2end/train_pse_bbox_hyper_feature_classfication_psroi.prototxt"
+train_net: "models/pascal_voc/VGG16/faster_rcnn_end2end/con5_3_psroi.prototxt"
 base_lr: 0.001
 lr_policy: "step"
 gamma: 0.1
@@ -13,4 +13,4 @@ weight_decay: 0.0005
 snapshot: 10000
 # We still use the snapshot prefix, though
 snapshot_prefix: "vgg16_faster_rcnn_simu_rpn"
-iter_size: 2
+iter_size: 1

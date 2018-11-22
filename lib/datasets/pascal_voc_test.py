@@ -791,7 +791,7 @@ def calculate_positive_boxes(boxes, rpn_bboxes):
 def calculate_corloc_rpn(d):
     cache_file_simu_points = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_points.pkl')
     cache_file_simu_bbox = os.path.join(_d.cache_path, 'voc_2007_trainval_gt_roidb_with_simu_bbox_heatmap.pkl')
-    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_classifi_bg_center_score*.pkl')
+    rpn_file_list = glob.glob(_d.cache_path + '/voc_2007_trainval_rpn_pse_gt_boxes_classifi_bg_valid*.pkl')
     view_result = False
     if os.path.exists(cache_file_simu_points):
         with open(cache_file_simu_points, 'rb') as cache_file_simu_points_fid, open(cache_file_simu_bbox,

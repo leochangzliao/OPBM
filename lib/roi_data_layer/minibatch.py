@@ -14,7 +14,7 @@ from fast_rcnn.config import cfg
 from utils.blob import prep_im_for_blob, im_list_to_blob
 import logging
 
-logging.basicConfig(filename='/home/leochang/Downloads/PycharmProjects/py-faster-rcnn/data/cache/msg.log')
+logging.basicConfig(filename='./data/cache/msg.log')
 DEBUG = False
 
 

@@ -79,9 +79,9 @@ def get_grids(height, width, startx, starty):
         for w in range(0, int(width / grid_num) * grid_num, grid_pixels_width):
             img_grids[index] = [w, h,
                                 w + grid_pixels_width if (w <= width and width - w > grid_pixels_width and (
-                                    index - 6) % 7 is not 0) else width,
+                                        index - 6) % 7 is not 0) else width,
                                 h + grid_pixels_height if (
-                                    h <= height and height - h > grid_pixels_height and index <= 41)
+                                        h <= height and height - h > grid_pixels_height and index <= 41)
                                 else height]
             index += 1
     return img_grids
@@ -94,6 +94,8 @@ def get_grids(height, width, startx, starty):
 #     return np.exp(a - max_) / np.sum(np.exp(a - max_))
 # print softmax([1, 2, 3])
 gt_boxes = np.array([[1, 2, 3, 4], [3, 4, 5, 6], [5, 6, 7, 8], [7, 8, 9, 10], [7, 45, 9, 10]])
+
+
 # hyper_proposals = np.zeros((len(gt_boxes) * 3, 4))
 # hyper_labels = np.zeros((len(gt_boxes) * 3,))
 # index = 4
@@ -107,6 +109,38 @@ gt_boxes = np.array([[1, 2, 3, 4], [3, 4, 5, 6], [5, 6, 7, 8], [7, 8, 9, 10], [7
 # print a
 # print np.shape(np.equal(a,b).nonzero())[1]
 
-a = np.zeros((38,10))
-a[10:20,:] =1
-print a
+# a = np.zeros((38,10))
+# a[10:20,:] =1
+# print a
+
+
+class Solution(object):
+    def lengthOfLongestSubstring(self, s):
+        """
+        :type s: str
+        :rtype: int
+        """
+        last = []
+        cur = []
+        for s_ in s:
+            if len(cur) == 0:
+                cur.append(s_)
+            else:
+                if s_ not in cur:
+                    cur.append(s_)
+                else:
+                    if len(last) <= len(cur):
+                        cur.append(s_)
+                        last = cur[:-1]
+                        index = last.index(s_)
+                        cur = last[index + 1:]
+                        cur.append(s_)
+                    else:
+                        index = cur.index(s_)
+                        cur = cur[index+1:]
+                        cur.append(s_)
+        return max(len(last), len(cur))
+
+
+s = Solution()
+print s.lengthOfLongestSubstring('pkjmrovkjouaqnebjfjaut')

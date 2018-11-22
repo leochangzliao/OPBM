@@ -16,6 +16,8 @@ import os
 
 from caffe.proto import caffe_pb2
 import google.protobuf as pb2
+import google.protobuf.text_format
+
 
 class SolverWrapper(object):
     """A simple wrapper around Caffe's solver.
@@ -29,7 +31,7 @@ class SolverWrapper(object):
         self.output_dir = output_dir
 
         if (cfg.TRAIN.HAS_RPN and cfg.TRAIN.BBOX_REG and
-            cfg.TRAIN.BBOX_NORMALIZE_TARGETS):
+                cfg.TRAIN.BBOX_NORMALIZE_TARGETS):
             # RPN can only use precomputed normalization because there are no
             # fixed statistics to compute a priori
             assert cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED
@@ -37,17 +39,17 @@ class SolverWrapper(object):
         if cfg.TRAIN.BBOX_REG:
             print 'Computing bounding-box regression targets...'
             self.bbox_means, self.bbox_stds = \
-                    rdl_roidb.add_bbox_regression_targets(roidb)
+                rdl_roidb.add_bbox_regression_targets(roidb)
             print 'done'
 
         self.solver = caffe.SGDSolver(solver_prototxt)
         if pretrained_model is not None:
             print ('Loading pretrained model '
                    'weights from {:s}').format(pretrained_model)
-            # solver_state_file = '/home/leochang/Downloads/PycharmProjects' \
-            #                     '/py-faster-rcnn/vgg16_faster_rcnn_simu_rpn_iter_20000.solverstate'
-            # self.solver.restore(solver_state_file)
-            self.solver.net.copy_from(pretrained_model)
+            solver_state_file = '/home/leochang/Downloads/PycharmProjects' \
+                                '/py-faster-rcnn/vgg16_faster_rcnn_simu_rpn_iter_70000.solverstate'
+            self.solver.restore(solver_state_file)
+            # self.solver.net.copy_from(pretrained_model)
         self.solver_param = caffe_pb2.SolverParameter()
         with open(solver_prototxt, 'rt') as f:
             pb2.text_format.Merge(f.read(), self.solver_param)
@@ -71,11 +73,11 @@ class SolverWrapper(object):
 
             # scale and shift with bbox reg unnormalization; then save snapshot
             net.params['bbox_pred'][0].data[...] = \
-                    (net.params['bbox_pred'][0].data *
-                     self.bbox_stds[:, np.newaxis])
+                (net.params['bbox_pred'][0].data *
+                 self.bbox_stds[:, np.newaxis])
             net.params['bbox_pred'][1].data[...] = \
-                    (net.params['bbox_pred'][1].data *
-                     self.bbox_stds + self.bbox_means)
+                (net.params['bbox_pred'][1].data *
+                 self.bbox_stds + self.bbox_means)
 
         infix = ('_' + cfg.TRAIN.SNAPSHOT_INFIX
                  if cfg.TRAIN.SNAPSHOT_INFIX != '' else '')
@@ -108,12 +110,13 @@ class SolverWrapper(object):
             if self.solver.iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
                 last_snapshot_iter = self.solver.iter
                 model_paths.append(self.snapshot())
-            # if self.solver.iter % 20 == 0:
-            #     print 'loss_cls:'+self.solver.net.blobs['loss_cls'].data[0]
-            #     print 'hyper_loss_cls:' + self.solver.net.blobs['hyper_loss_cls'].data[0]
+                # if self.solver.iter % 20 == 0:
+                #     print 'loss_cls:'+self.solver.net.blobs['loss_cls'].data[0]
+                #     print 'hyper_loss_cls:' + self.solver.net.blobs['hyper_loss_cls'].data[0]
         if last_snapshot_iter != self.solver.iter:
             model_paths.append(self.snapshot())
         return model_paths
+
 
 def get_training_roidb(imdb):
     """Returns a roidb (Region of Interest database) for use in training."""
@@ -127,6 +130,7 @@ def get_training_roidb(imdb):
     print 'done'
 
     return imdb.roidb
+
 
 def filter_roidb(roidb):
     """Remove roidb entries that have no usable RoIs."""
@@ -151,6 +155,7 @@ def filter_roidb(roidb):
     print 'Filtered {} roidb entries: {} -> {}'.format(num - num_after,
                                                        num, num_after)
     return filtered_roidb
+
 
 def train_net(solver_prototxt, roidb, output_dir,
               pretrained_model=None, max_iters=40000):

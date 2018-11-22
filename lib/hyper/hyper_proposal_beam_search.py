@@ -17,6 +17,17 @@ import matplotlib.pyplot as plt
 from utils.cython_bbox import bbox_overlaps
 
 DEBUG = False
+beam_search_proposal_scores = []
+
+update_times = 0
+
+
+def update_bbox_score(scores_):
+    global update_times
+    update_times += 1
+    print 'update_times:',update_times
+    global beam_search_proposal_scores
+    beam_search_proposal_scores = scores_
 
 
 class ProposalBeamSearch(caffe.Layer):
@@ -29,14 +40,19 @@ class ProposalBeamSearch(caffe.Layer):
         # parse the layer parameter string, which must be valid YAML
         layer_params = yaml.load(self.param_str_)
 
-        self._feat_stride = layer_params['feat_stride']  # feat_stride =4
-        anchor_scales = layer_params.get('scales', (8, 16, 32, 64))
+        self._feat_stride = layer_params['feat_stride']  # feat_stride =16
+        anchor_scales = layer_params.get('scales', (8, 16, 32))
         self._anchors = generate_anchors(scales=np.array(anchor_scales))
         self._num_anchors = self._anchors.shape[0]
+        self.shifts = np.zeros((50, 4))  # x1+ shifts[0],y1+ shifts[1],x2+ shifts[2],y2+ shifts[3],
+        self.current_dire = 0  # 0 is up, 1 is left, 2 is bottom, 3 is right
+        self.shift_pixels = 16
+        self.iter = 0
         if DEBUG:
             print 'feat_stride: {}'.format(self._feat_stride)
-        top[0].reshape(1, 5, 1, 1)
+        top[0].reshape(1, 6, 1, 1)
         top[1].reshape(1, 1, 1, 1)
+        # top[2].reshape(1,1) # current directions of cropping images or padding images
 
     def forward(self, bottom, top):
         # assert bottom[0].data.shape[0] == 1, \
@@ -48,9 +64,7 @@ class ProposalBeamSearch(caffe.Layer):
         im_info = bottom[3].data[0, :]
         data = bottom[4].data
         gt_boxes = bottom[5].data
-        # hyper_features = bottom[6].data
         scores = bottom[6].data[:, self._num_anchors:, :, :]
-        hyper_features = bottom[7].data
         cfg_key = str(self.phase)  # either 'TRAIN' or 'TEST'
         pre_nms_topN = cfg[
             cfg_key].RPN_PRE_NMS_TOP_N  # 12000 Number of top scoring boxes to keep before apply NMS to RPN proposals
@@ -65,8 +79,8 @@ class ProposalBeamSearch(caffe.Layer):
             print 'im_size: ({}, {})'.format(im_info[0], im_info[1])
             print 'scale: {}'.format(im_info[2])
             # print 'feature_shape: {}'.format(np.shape(hyper_features))
-        feature_shape = np.shape(hyper_features)
-        hyper_features = hyper_features.reshape((feature_shape[1], feature_shape[2], feature_shape[3]))
+        # feature_shape = np.shape(hyper_features)
+        # hyper_features = hyper_features.reshape((feature_shape[1], feature_shape[2], feature_shape[3]))
         # hyper_proposals = np.zeros((len(gt_boxes) * 7, 4))
         # hyper_labels = np.zeros((len(gt_boxes) * 7,))
 
@@ -95,178 +109,52 @@ class ProposalBeamSearch(caffe.Layer):
             print 'num anchors:{}'.format(np.shape(anchors))
             print 'num proposals_ori:{}'.format(np.shape(proposals_ori))
         proposals_ori = clip_boxes(proposals_ori, im_info[:2])
-        keep = _filter_boxes(proposals_ori, min_size * im_info[2])
+        keep = _filter_boxes(proposals_ori, 8 * im_info[2])
 
         proposals_ori = proposals_ori[keep, :]
         scores_ori = scores_ori[keep]
 
         index = 0
         fg_fraction = 0.5  # positive vs negative =1
-        fg_boxes_per_image = 64
-        bg_boxes_per_image = 64
-        fg_pro_each = fg_boxes_per_image / len(gt_boxes)
+        fg_boxes_per_image = 4
+        bg_boxes_per_image = 0
+        fg_pro_each = 3  # fg_boxes_per_image / len(gt_boxes)
         fg_pro_num = fg_pro_each * len(gt_boxes)
         bg_pro_each = bg_boxes_per_image / len(gt_boxes)
         bg_pro_num = bg_pro_each * len(gt_boxes)
         hyper_proposals = np.zeros((fg_pro_num + bg_pro_num + len(gt_boxes), 4))
         hyper_labels = np.zeros((fg_pro_num + bg_pro_num + len(gt_boxes),))
-
-        for gt_box in gt_boxes:
-            label = gt_box[4]
-            overlaps = bbox_overlaps(proposals_ori.astype(np.float),
-                                     np.array(gt_box[0:4]).reshape((1, 4)).astype(np.float))
-            thresh = 0.6
-            keep = np.where(np.array(overlaps) >= thresh)[0]
-            while len(keep) < fg_pro_each and thresh > 0.4:
-                thresh -= 0.05
-                keep = np.where(np.array(overlaps) >= thresh)[0]
-            proposals = proposals_ori[keep, :]
-            scores = scores_ori[keep]
-
-            order = scores.ravel().argsort()[::-1]
-            if pre_nms_topN > 0:
-                order = order[:pre_nms_topN]
-            proposals = proposals[order, :]
-            scores = scores[order]
-
-            keep = nms(np.hstack((proposals.astype(np.float32), scores.astype(np.float32))), nms_thresh)
-            while len(keep) < fg_pro_each and nms_thresh < 0.9:
-                nms_thresh += 0.05
-                keep = nms(np.hstack((proposals.astype(np.float32), scores.astype(np.float32))), nms_thresh)
-            nms_thresh = 0.7
-            proposals = proposals[keep, :]
-            scores = scores[keep]
-
-            # fig2, ax2 = plt.subplots(figsize=(12, 12))
-            # gci = ax2.imshow(np.average(hyper_features, axis=0))
-            # plt.colorbar(gci, fraction=0.046, pad=0.04)
-            # for p in proposals:
-            #     p = p / self._feat_stride
-            #     ax2.add_patch(
-            #
-            #         plt.Rectangle((p[0], p[1]),
-            #                       p[2] - p[0],
-            #                       p[3] - p[1], fill=False,
-            #                       edgecolor='white', linewidth=1)
-            #     )
-            # plt.title('hyper_rpn_conv_features')
-            # plt.show()
-
-            proposals_ = proposals
-            scores_ = scores
-            order = scores_.ravel().argsort()[::-1]
-            order = order[:fg_pro_each]
-            proposals_ = proposals_[order, :]
-
-            # positive examples
-            hyper_proposals[index, :] = np.array(gt_box[0:4]).reshape((1, 4))
-            # gt_box = gt_box/self._feat_stride
-            # ax2.add_patch(
-            #
-            #     plt.Rectangle((gt_box[0], gt_box[1]),
-            #                   gt_box[2] - gt_box[0],
-            #                   gt_box[3] - gt_box[1], fill=False,
-            #                   edgecolor='green', linewidth=1)
-            # )
-            hyper_labels[index] = label
-            index += 1
-            if len(proposals_) >= fg_pro_each:
-                hyper_proposals[index:index + fg_pro_each, :] = proposals_[:fg_pro_each]
-            else:
-                hyper_proposals[index:index + len(proposals_), :] = proposals_[:len(proposals_)]
-                hyper_proposals[index + len(proposals_):fg_pro_each, :] = np.array(gt_box[0:4]).reshape((1, 4))
-            hyper_labels[index:index + fg_pro_each] = label
-            index += fg_pro_each
-            # for p in hyper_proposals[0:index,:]:
-            #     p = p / self._feat_stride
-            #     ax2.add_patch(
-            #
-            #         plt.Rectangle((p[0], p[1]),
-            #                       p[2] - p[0],
-            #                       p[3] - p[1], fill=False,
-            #                       edgecolor='white', linewidth=1)
-            #     )
-            # negative examples
-            keep = np.where((np.array(overlaps) > 0.1) & (np.array(overlaps) < 0.3))[0]
-            # print 'len(negative):', len(keep)
-            bg_proposals = proposals_ori[keep, :]
-            if len(keep) >= bg_pro_each:
-                bg_random = np.random.choice(keep, bg_pro_each, replace=False)
-                hyper_proposals[index:index + bg_pro_each, :] = proposals_ori[bg_random, :]
-            else:
-                iou_thresh = 0.35
-                while len(keep) < bg_pro_each and iou_thresh < 0.5:
-                    keep = np.where((np.array(overlaps) > 0.1) & (np.array(overlaps) < iou_thresh))[0]
-                    iou_thresh += 0.05
-                if len(keep) < bg_pro_each:
-                    bg_proposals = proposals_ori[0:bg_pro_each, :]
-                else:
-                    bg_random = np.random.choice(keep, bg_pro_each, replace=False)
-                    bg_proposals = proposals_ori[bg_random, :]
-                print 'len(bg_proposals):', len(bg_proposals), iou_thresh
-
-                hyper_proposals[index:index + bg_pro_each, :] = bg_proposals[:bg_pro_each]
-
-            # for p in hyper_proposals[index:index + bg_pro_each, :]:
-            #     p = p / self._feat_stride
-            #     ax2.add_patch(
-            #
-            #         plt.Rectangle((p[0], p[1]),
-            #                       p[2] - p[0],
-            #                       p[3] - p[1], fill=False,
-            #                       edgecolor='yellow', linewidth=1)
-            #     )
-            # plt.title('hyper_rpn_conv_features')
-            # plt.show()
-
-            hyper_labels[index:index + bg_pro_each] = 0  # set 0 as background
-            index += bg_pro_each
-            keep = np.where(np.array(overlaps) < thresh)[0]
-            proposals_ori = proposals_ori[keep, :]
-            scores_ori = scores_ori[keep, :]
-
-        # print hyper_labels, hyper_proposals
-        # for index, gt_box in enumerate(gt_boxes):
-        #     label = gt_box[4] - 1  # we don't have background class, so we set label minus 1
-        #     gt_box = gt_box[:4] / self._feat_stride  # feature map size
-        #     width = gt_box[2] - gt_box[0]
-        #     height = gt_box[3] - gt_box[1]
-        #     startx = int(gt_box[0])
-        #     starty = int(gt_box[1])
-        #     grids = get_grids(int(height), int(width), starty, startx, feature_shape)
+        # for gt_box in gt_boxes:
+        #     label = gt_box[4]
+        #     overlaps = bbox_overlaps(proposals_ori.astype(np.float),
+        #                              np.array(gt_box[0:4]).reshape((1, 4)).astype(np.float))
+        #     thresh = 0.6
+        #     keep = np.where(np.array(overlaps) >= thresh)[0]
+        #     while len(keep) < fg_pro_each and thresh > 0.4:
+        #         thresh -= 0.05
+        #         keep = np.where(np.array(overlaps) >= thresh)[0]
+        #     proposals = proposals_ori[keep, :]
+        #     scores = scores_ori[keep]
         #
-        #     # (chanel,height,width)
-        #     grid_value = [np.sum(hyper_features[:, grid[1]:grid[3], grid[0]:grid[2]]) for grid in grids]
-        #     max_ = np.max(grid_value)
-        #     # sum_ = np.sum(np.exp(grid_value - max_))
-        #     # grid_value = np.exp(grid_value - max_) / sum_
-        #     sum_ = np.sum(grid_value)
-        #     grid_value = grid_value / sum_
-        #     average_value = np.average(grid_value)
-        #     # order = np.array(grid_value).ravel().argsort()[::-1]
-        #     order = np.where(grid_value >= average_value)[0]
-        #     # if is_small_object == 1:
-        #     #     order = order[:20]
-        #     # else:
-        #     #     order = order[:40]
-        #     grids = np.array(grids)[order, :]
-        #     target_proposal = [np.min(grids[:, 0]), np.min(grids[:, 1]), np.max(grids[:, 2]), np.max(grids[:, 3])]
-        #     proposals = gernerater_beam_serarch_proposals(target_proposal, feature_shape)
-        #     # print np.shape(hyper_proposals), index, np.shape(hyper_labels), label
-        #     hyper_proposals[index * 7:index * 7 + 7, :] = proposals
-        #     hyper_labels[index * 7:index * 7 + 7] = label
+        #     order = scores.ravel().argsort()[::-1]
+        #     if pre_nms_topN > 0:
+        #         order = order[:pre_nms_topN]
+        #     proposals = proposals[order, :]
+        #     scores = scores[order]
+        #
+        #     keep = nms(np.hstack((proposals.astype(np.float32), scores.astype(np.float32))), nms_thresh)
+        #     while len(keep) < fg_pro_each and nms_thresh < 0.9:
+        #         nms_thresh += 0.05
+        #         keep = nms(np.hstack((proposals.astype(np.float32), scores.astype(np.float32))), nms_thresh)
+        #     nms_thresh = 0.7
+        #     proposals = proposals[keep, :]
+        #     scores = scores[keep]
         #
         #     # fig2, ax2 = plt.subplots(figsize=(12, 12))
         #     # gci = ax2.imshow(np.average(hyper_features, axis=0))
         #     # plt.colorbar(gci, fraction=0.046, pad=0.04)
-        #     # for grid in grids:
-        #     #     ax2.add_patch(
-        #     #         plt.Rectangle((grid[0], grid[1]),
-        #     #                       grid[2] - grid[0],
-        #     #                       grid[3] - grid[1], fill=False,
-        #     #                       edgecolor='yellow', linewidth=0.5)
-        #     #     )
         #     # for p in proposals:
+        #     #     p = p / self._feat_stride
         #     #     ax2.add_patch(
         #     #
         #     #         plt.Rectangle((p[0], p[1]),
@@ -274,18 +162,198 @@ class ProposalBeamSearch(caffe.Layer):
         #     #                       p[3] - p[1], fill=False,
         #     #                       edgecolor='white', linewidth=1)
         #     #     )
-        #     # print proposals
         #     # plt.title('hyper_rpn_conv_features')
         #     # plt.show()
+        #
+        #     proposals_ = proposals
+        #     scores_ = scores
+        #     order = scores_.ravel().argsort()[::-1]
+        #     order = order[:fg_pro_each]
+        #     proposals_ = proposals_[order, :]
+        #
+        #     # positive examples
+        #     hyper_proposals[index, :] = np.array(gt_box[0:4]).reshape((1, 4))
+        #     # gt_box = gt_box/self._feat_stride
+        #     # ax2.add_patch(
+        #     #
+        #     #     plt.Rectangle((gt_box[0], gt_box[1]),
+        #     #                   gt_box[2] - gt_box[0],
+        #     #                   gt_box[3] - gt_box[1], fill=False,
+        #     #                   edgecolor='green', linewidth=1)
+        #     # )
+        #     hyper_labels[index] = label
+        #     index += 1
+        #     if len(proposals_) >= fg_pro_each:
+        #         hyper_proposals[index:index + fg_pro_each, :] = proposals_[:fg_pro_each]
+        #     else:
+        #         hyper_proposals[index:index + len(proposals_), :] = proposals_[:len(proposals_)]
+        #         hyper_proposals[index + len(proposals_):fg_pro_each, :] = np.array(gt_box[0:4]).reshape((1, 4))
+        #     hyper_labels[index:index + fg_pro_each] = label
+        #     index += fg_pro_each
+        #     # for p in hyper_proposals[0:index,:]:
+        #     #     p = p / self._feat_stride
+        #     #     ax2.add_patch(
+        #     #
+        #     #         plt.Rectangle((p[0], p[1]),
+        #     #                       p[2] - p[0],
+        #     #                       p[3] - p[1], fill=False,
+        #     #                       edgecolor='white', linewidth=1)
+        #     #     )
+        #     # negative examples
+        #     keep = np.where((np.array(overlaps) > 0.1) & (np.array(overlaps) < 0.3))[0]
+        #     # print 'len(negative):', len(keep)
+        #     bg_proposals = proposals_ori[keep, :]
+        #     if len(keep) >= bg_pro_each:
+        #         bg_random = np.random.choice(keep, bg_pro_each, replace=False)
+        #         hyper_proposals[index:index + bg_pro_each, :] = proposals_ori[bg_random, :]
+        #     else:
+        #         iou_thresh = 0.35
+        #         while len(keep) < bg_pro_each and iou_thresh < 0.5:
+        #             keep = np.where((np.array(overlaps) > 0.1) & (np.array(overlaps) < iou_thresh))[0]
+        #             iou_thresh += 0.05
+        #         if len(keep) < bg_pro_each:
+        #             bg_proposals = proposals_ori[0:bg_pro_each, :]
+        #         else:
+        #             bg_random = np.random.choice(keep, bg_pro_each, replace=False)
+        #             bg_proposals = proposals_ori[bg_random, :]
+        #         print 'len(bg_proposals):', len(bg_proposals), iou_thresh
+        #
+        #         hyper_proposals[index:index + bg_pro_each, :] = bg_proposals[:bg_pro_each]
+        #
+        #     # for p in hyper_proposals[index:index + bg_pro_each, :]:
+        #     #     p = p / self._feat_stride
+        #     #     ax2.add_patch(
+        #     #
+        #     #         plt.Rectangle((p[0], p[1]),
+        #     #                       p[2] - p[0],
+        #     #                       p[3] - p[1], fill=False,
+        #     #                       edgecolor='yellow', linewidth=1)
+        #     #     )
+        #     # plt.title('hyper_rpn_conv_features')
+        #     # plt.show()
+        #
+        #     hyper_labels[index:index + bg_pro_each] = 0  # set 0 as background
+        #     index += bg_pro_each
+        #     keep = np.where(np.array(overlaps) < thresh)[0]
+        #     proposals_ori = proposals_ori[keep, :]
+        #     scores_ori = scores_ori[keep, :]
+
+        # print hyper_labels, hyper_proposals
+        if self.current_dire == 0 and self.iter == 0:
+            # update_bbox_score([])
+            global beam_search_proposal_scores
+            beam_search_proposal_scores = []
+            self.shifts[:, :] = 0
+        for index, gt_box in enumerate(gt_boxes):
+            label = gt_box[4]
+            gt_box = gt_box[:4]  # / self._feat_stride  # feature map size
+            # width = gt_box[2] - gt_box[0]
+            # height = gt_box[3] - gt_box[1]
+            # startx = int(gt_box[0])
+            # starty = int(gt_box[1])
+            # grids = get_grids(int(height), int(width), starty, startx, feature_shape)
+            #
+            # # (chanel,height,width)
+            # grid_value = [np.sum(hyper_features[:, grid[1]:grid[3], grid[0]:grid[2]]) for grid in grids]
+            # max_ = np.max(grid_value)
+            # # sum_ = np.sum(np.exp(grid_value - max_))
+            # # grid_value = np.exp(grid_value - max_) / sum_
+            # sum_ = np.sum(grid_value)
+            # grid_value = grid_value / sum_
+            # average_value = np.average(grid_value)
+            # # order = np.array(grid_value).ravel().argsort()[::-1]
+            # order = np.where(grid_value >= average_value)[0]
+            # # if is_small_object == 1:
+            # #     order = order[:20]
+            # # else:
+            # #     order = order[:40]
+            # grids = np.array(grids)[order, :]
+            # target_proposal = [np.min(grids[:, 0]), np.min(grids[:, 1]), np.max(grids[:, 2]), np.max(grids[:, 3])]
+            target_proposal = gt_box
+
+            if len(beam_search_proposal_scores) is 0:
+                proposals = generate_beam_serarch_proposals(target_proposal, im_info[:2],
+                                                              self.shifts[index, :], self.current_dire)
+                hyper_proposals[index * fg_boxes_per_image:index * fg_boxes_per_image + fg_boxes_per_image,
+                :] = proposals
+                hyper_labels[index * fg_boxes_per_image:index * fg_boxes_per_image + fg_boxes_per_image] = label
+            else:
+                arg_max = np.argmax(beam_search_proposal_scores[index])
+                if arg_max == 0:  # current best
+                    self.shifts[index, :] = self.shifts[index, :]
+                elif arg_max == 1:  # bboxes cropped to small
+                    if (self.current_dire - 1) % 4 is 0:
+                        self.shifts[index, 1] += self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 1:
+                        self.shifts[index, 0] += self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 2:
+                        self.shifts[index, 3] -= self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 3:
+                        self.shifts[index, 2] -= self.shift_pixels
+                elif arg_max == 2:  # bboxes paded to big
+                    if (self.current_dire - 1) % 4 is 0:
+                        self.shifts[index, 1] -= self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 1:
+                        self.shifts[index, 0] -= self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 2:
+                        self.shifts[index, 3] += self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 3:
+                        self.shifts[index, 2] += self.shift_pixels
+                elif arg_max == 3: # bboxes paded to big with 0 counted
+                    if (self.current_dire - 1) % 4 is 0:
+                        self.shifts[index, 1] -= self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 1:
+                        self.shifts[index, 0] -= self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 2:
+                        self.shifts[index, 3] += self.shift_pixels
+                    elif (self.current_dire - 1) % 4 is 3:
+                        self.shifts[index, 2] += self.shift_pixels
+                # self.current_dire = (self.current_dire + 1) % 4
+                proposals = generate_beam_serarch_proposals(target_proposal, im_info[:2],
+                                                              self.shifts[index, :], self.current_dire)
+                hyper_proposals[index * fg_boxes_per_image:index * fg_boxes_per_image + fg_boxes_per_image,
+                :] = proposals
+                hyper_labels[index * fg_boxes_per_image:index * fg_boxes_per_image + fg_boxes_per_image] = label
+
+            # fig2, ax2 = plt.subplots(figsize=(12, 12))
+            # gci = ax2.imshow(np.average(hyper_features, axis=0))
+            # plt.colorbar(gci, fraction=0.046, pad=0.04)
+            # for grid in grids:
+            #     ax2.add_patch(
+            #         plt.Rectangle((grid[0], grid[1]),
+            #                       grid[2] - grid[0],
+            #                       grid[3] - grid[1], fill=False,
+            #                       edgecolor='yellow', linewidth=0.5)
+            #     )
+            # for p in proposals:
+            #     ax2.add_patch(
+            #
+            #         plt.Rectangle((p[0], p[1]),
+            #                       p[2] - p[0],
+            #                       p[3] - p[1], fill=False,
+            #                       edgecolor='white', linewidth=1)
+            #     )
+            # print proposals
+            # plt.title('hyper_rpn_conv_features')
+            # plt.show()
+
+        # print 'beam_search_hyper_proposal', hyper_proposals
+        # print 'gt_boxes:',gt_boxes
         batch_inds = np.zeros((hyper_proposals.shape[0], 1), dtype=np.float32)
-        blob = np.hstack((batch_inds, hyper_proposals.astype(np.float32, copy=False) / self._feat_stride))
+        hyper_dires = self.current_dire * np.ones((hyper_proposals.shape[0], 1),dtype=np.int)
+        hyper_dires[::2] = -1
+        blob = np.hstack(
+            (batch_inds, hyper_proposals.astype(np.float32, copy=False) / self._feat_stride,hyper_dires))
         # print 'hyper_proposal', hyper_proposals/ self._feat_stride,  hyper_labels
-        blob = blob.reshape((len(hyper_proposals), 5, 1, 1))
+        blob = blob.reshape((len(hyper_proposals), 6, 1, 1))
         hyper_labels = hyper_labels.reshape((len(hyper_labels), 1, 1, 1))
+        self.current_dire = (self.current_dire + 1) % 4
+        self.iter = (self.iter + 1) % 8
         top[0].reshape(*(blob.shape))
         top[0].data[...] = blob
         top[1].reshape(*(hyper_labels.shape))
         top[1].data[...] = hyper_labels
+
 
     def backward(self, top, propagate_down, bottom):
         """This layer does not propagate gradients."""
@@ -304,42 +372,70 @@ def _filter_boxes(boxes, min_size):
     return keep
 
 
-def gernerater_beam_serarch_proposals(target_proposal, feature_shape):
+def generate_beam_serarch_proposals(target_proposal, feature_shape, shifts, current_dire):
     all_proposals = []
-    feature_height = feature_shape[2]
-    feature_width = feature_shape[3]
-    zoom_in_ratio = 1.1
-    zoom_out_ratio = 0.9
-    moved_dis = 5
-    target_center_x = (target_proposal[0] + target_proposal[2]) / 2
-    target_center_y = (target_proposal[1] + target_proposal[3]) / 2
+    cropped_distance = 16  # receptive field
+    min_size = 16 * 1.5
+    # all_proposals.append(target_proposal)
+    feature_height = feature_shape[0]
+    feature_width = feature_shape[1]
+    current_best = target_proposal + shifts
+    all_proposals.append(current_best)
+    all_proposals.append(current_best)  # for small object
+    if current_dire == 0:
+        all_proposals.append([current_best[0], current_best[1] - cropped_distance,  # big
+                              current_best[2], current_best[3]])
+        all_proposals.append([current_best[0], current_best[1] - cropped_distance,  # big
+                              current_best[2], current_best[3]])
+
+    elif current_dire == 1:
+        all_proposals.append([current_best[0] - cropped_distance, current_best[1],  # big
+                              current_best[2], current_best[3]])
+        all_proposals.append([current_best[0] - cropped_distance, current_best[1],  # big
+                              current_best[2], current_best[3]])
+    elif current_dire == 2:
+        all_proposals.append([current_best[0], current_best[1],
+                              current_best[2], current_best[3] + cropped_distance])  # big
+        all_proposals.append([current_best[0], current_best[1],
+                              current_best[2], current_best[3] + cropped_distance])  # big
+    else:
+        all_proposals.append([current_best[0], current_best[1],
+                              current_best[2] + cropped_distance, current_best[3]])  # big
+        all_proposals.append([current_best[0], current_best[1],
+                              current_best[2] + cropped_distance, current_best[3]])  # big
+    # zoom_in_ratio = [1.1,1.2,1.3]
+    # zoom_out_ratio =[0.7,0.8,0.9]
+    # moved_dis = 20
+    # target_center_x = (target_proposal[0] + target_proposal[2]) / 2
+    # target_center_y = (target_proposal[1] + target_proposal[3]) / 2
     # zoom in target_proposal
-    trans_dis_x = target_center_x * (zoom_in_ratio - 1)
-    trans_dis_y = target_center_y * (zoom_in_ratio - 1)
-    temp = np.array(target_proposal) * zoom_in_ratio
-    proposal = [temp[0] - trans_dis_x, temp[1] - trans_dis_y,
-                temp[2] - trans_dis_x, temp[3] - trans_dis_y]
-    all_proposals.append(proposal)
-    # zoom out target_proposal
-    trans_dis_x = target_center_x * (1 - zoom_out_ratio)
-    trans_dis_y = target_center_y * (1 - zoom_out_ratio)
-    temp = np.array(target_proposal) * zoom_out_ratio
-    proposal = [temp[0] + trans_dis_x, temp[1] + trans_dis_y,
-                temp[2] + trans_dis_x, temp[3] + trans_dis_y]
-    all_proposals.append(proposal)
-    # move target_proposal to right
-    all_proposals.append([target_proposal[0] + moved_dis, target_proposal[1],
-                          target_proposal[2] + moved_dis, target_proposal[3]])
-    # move target_proposal to left
-    all_proposals.append([target_proposal[0] - moved_dis, target_proposal[1],
-                          target_proposal[2] - moved_dis, target_proposal[3]])
-    # move target_proposal to up
-    all_proposals.append([target_proposal[0], target_proposal[1] - moved_dis,
-                          target_proposal[2], target_proposal[3] - moved_dis])
-    # move target_proposal to down
-    all_proposals.append([target_proposal[0], target_proposal[1] + moved_dis,
-                          target_proposal[2], target_proposal[3] + moved_dis])
-    all_proposals.append(target_proposal)
+    # for ratio in zoom_in_ratio:
+    #     trans_dis_x = target_center_x * (ratio - 1)
+    #     trans_dis_y = target_center_y * (ratio - 1)
+    #     temp = np.array(target_proposal) * ratio
+    #     proposal = [temp[0] - trans_dis_x, temp[1] - trans_dis_y,
+    #                 temp[2] - trans_dis_x, temp[3] - trans_dis_y]
+    #     all_proposals.append(proposal)
+    # # zoom out target_proposal
+    # for ratio in zoom_out_ratio:
+    #     trans_dis_x = target_center_x * (1 - ratio)
+    #     trans_dis_y = target_center_y * (1 - ratio)
+    #     temp = np.array(target_proposal) * ratio
+    #     proposal = [temp[0] + trans_dis_x, temp[1] + trans_dis_y,
+    #                 temp[2] + trans_dis_x, temp[3] + trans_dis_y]
+    #     all_proposals.append(proposal)
+    # # move target_proposal to right
+    # all_proposals.append([target_proposal[0] + moved_dis, target_proposal[1],
+    #                       target_proposal[2] + moved_dis, target_proposal[3]])
+    # # move target_proposal to left
+    # all_proposals.append([target_proposal[0] - moved_dis, target_proposal[1],
+    #                       target_proposal[2] - moved_dis, target_proposal[3]])
+    # # move target_proposal to up
+    # all_proposals.append([target_proposal[0], target_proposal[1] - moved_dis,
+    #                       target_proposal[2], target_proposal[3] - moved_dis])
+    # # move target_proposal to down
+    # all_proposals.append([target_proposal[0], target_proposal[1] + moved_dis,
+    #                       target_proposal[2], target_proposal[3] + moved_dis])
     return check_sanity(all_proposals, feature_height, feature_width)
 
 
@@ -348,7 +444,7 @@ def check_sanity(all_proposals, height, width):
     for p in all_proposals:
         checked.append([p[0] if p[0] > 0 else 0,
                         p[1] if p[1] > 0 else 0,
-                        p[2] if ((p[2] - p[0]) < width and p[0] >= 0) or (p[2] < width and p[0] < 0)  else width,
+                        p[2] if ((p[2] - p[0]) < width and p[0] >= 0) or (p[2] < width and p[0] < 0) else width,
                         p[3] if ((p[3] - p[1]) < height and p[3] >= 0) or (p[3] < height and p[1] < 0) else height])
 
     return np.array(checked).reshape((len(checked), 4))

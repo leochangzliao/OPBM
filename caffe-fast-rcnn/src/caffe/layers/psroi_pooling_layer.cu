@@ -36,8 +36,9 @@ namespace caffe {
       int n = index / pooled_width / pooled_height / output_dim;
 
       // [start, end) interval for spatial sampling
-      bottom_rois += n * 5;
+      bottom_rois += n * 6;
       int roi_batch_ind = bottom_rois[0];
+      int roi_dire = bottom_rois[5];
       Dtype roi_start_w =
         static_cast<Dtype>(round(bottom_rois[1])) * spatial_scale;
       Dtype roi_start_h =
@@ -68,8 +69,46 @@ namespace caffe {
       hend = min(max(hend, 0), height);
       wstart = min(max(wstart, 0), width);
       wend = min(max(wend, 0), width);
-      bool is_empty = (hend <= hstart) || (wend <= wstart);
 
+      //*********** added by leo start ***********
+      Dtype bin_area = (hend - hstart)*(wend - wstart);
+      if(roi_dire == 0)
+      {
+          if(hstart == floor(0 * bin_size_h + roi_start_h))
+          {
+              hstart +=2;
+          }
+
+      }else if (roi_dire == 1)
+      {
+          if(wstart == floor(0 * bin_size_w + roi_start_w))
+          {
+              wstart +=2;
+          }
+
+      }else if (roi_dire == 2)
+      {
+          if( hend == ceil(roi_end_h))
+          {
+              hend -=2;
+          }
+
+      }else if (roi_dire == 3)
+      {
+          if (wend == ceil(roi_end_w))
+          {
+              wend -=2;
+          }
+
+      }
+      hstart = min(max(hstart, 0), height);
+      hend = min(max(hend, 0), height);
+      wstart = min(max(wstart, 0), width);
+      wend = min(max(wend, 0), width);
+
+      //*********** added by leo end ***********
+
+      bool is_empty = (hend <= hstart) || (wend <= wstart);
       int gw = pw;
       int gh = ph;
       int c = (ctop*group_size + gh)*group_size + gw;
@@ -83,7 +122,7 @@ namespace caffe {
         }
       }
 
-      Dtype bin_area = (hend - hstart)*(wend - wstart);
+      //Dtype bin_area = (hend - hstart)*(wend - wstart);
       top_data[index] = is_empty? 0. : out_sum/bin_area;
       mapping_channel[index] = c;
     }
@@ -96,10 +135,11 @@ namespace caffe {
     const Dtype* bottom_rois = bottom[1]->gpu_data();
     Dtype* top_data = top[0]->mutable_gpu_data();
     int* mapping_channel_ptr = mapping_channel_.mutable_gpu_data();
-    int count = top[0]->count();
+    int count = top[0]->count(); // batch*21*7*7
     caffe_gpu_set(count, Dtype(0), top_data);
     caffe_gpu_set(count, -1, mapping_channel_ptr);
     // NOLINT_NEXT_LINE(whitespace/operators)
+    //const int CAFFE_CUDA_NUM_THREADS = 512;
     PSROIPoolingForward<Dtype> << <CAFFE_GET_BLOCKS(count),
       CAFFE_CUDA_NUM_THREADS >> >(count, bottom_data, spatial_scale_,
       channels_, height_, width_, pooled_height_,
@@ -128,7 +168,7 @@ namespace caffe {
       int n = index / pooled_width / pooled_height / output_dim;
 
       // [start, end) interval for spatial sampling
-      bottom_rois += n * 5;
+      bottom_rois += n * 6;
       int roi_batch_ind = bottom_rois[0];
       Dtype roi_start_w =
         static_cast<Dtype>(round(bottom_rois[1])) * spatial_scale;
